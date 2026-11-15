@@ -252,6 +252,9 @@ const DANGEROUS_FILE_EXTENSIONS = [
   ".sql",
   ".bak",
   ".log",
+  ".zip",
+  ".tar",
+  ".gz",
 ];
 
 export function blockSensitiveFileRequests(req: Request, res: Response, next: NextFunction) {

@@ -1871,12 +1871,17 @@ const isProd = process.env.NODE_ENV === "production";
 let viteServerPromise: Promise<any> | null = null;
 
 if (!isProd) {
-  viteServerPromise = import("vite").then(({ createServer: createViteServer }) =>
-    createViteServer({
-      server: { middlewareMode: true, hmr: false },
-      appType: "spa",
-    })
-  );
+  viteServerPromise = import("vite")
+    .then(({ createServer: createViteServer }) =>
+      createViteServer({
+        server: { middlewareMode: true, hmr: false },
+        appType: "spa",
+      })
+    )
+    .catch((err) => {
+      console.error("Failed to initialize Vite dev middleware:", err);
+      throw err;
+    });
 
   app.use(async (req, res, next) => {
     if (req.path.startsWith("/api/")) return next();
@@ -1912,7 +1917,27 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
   }
 });
 
-const PORT = Number(process.env.PORT) || 3000;
+function resolveListenPort(): number {
+  const portFlagIdx = process.argv.findIndex(
+    (arg) => arg === "--port" || arg.startsWith("--port=")
+  );
+  if (portFlagIdx !== -1) {
+    const raw = process.argv[portFlagIdx];
+    const value = raw.includes("=") ? raw.split("=")[1] : process.argv[portFlagIdx + 1];
+    const parsed = Number(value);
+    if (Number.isInteger(parsed) && parsed > 0 && parsed < 65536) {
+      return parsed;
+    }
+  }
+  const envPort = Number(process.env.PORT);
+  if (!isProd) {
+    // In container dev environments PORT=8080 is reserved by the reverse proxy -> 3000
+    return Number.isInteger(envPort) && envPort > 0 && envPort !== 8080 ? envPort : 3000;
+  }
+  return Number.isInteger(envPort) && envPort > 0 ? envPort : 3000;
+}
+
+const PORT = resolveListenPort();
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server is listening on http://0.0.0.0:${PORT}...`);
 });
