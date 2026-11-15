@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://news-io.ai.studio/sitemap.xml

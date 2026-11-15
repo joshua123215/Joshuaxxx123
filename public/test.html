@@ -1,0 +1,11 @@
+<!DOCTYPE html>
+<html>
+<body>
+<script>
+fetch("https://yts.mx/api/v2/movie_details.json?imdb_id=tt0111161")
+  .then(r => r.json())
+  .then(d => document.write(JSON.stringify(d)))
+  .catch(e => document.write(e.toString()));
+</script>
+</body>
+</html>

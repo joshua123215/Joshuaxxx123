@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <link rel="icon" type="image/png" href="/logo.png" />
+    <link rel="manifest" href="/manifest.json" />
+    <title>GlobalNews.site</title>
+    
+    <!-- Primary Meta Tags -->
+    <meta name="title" content="GlobalNews.site" />
+    <meta name="description" content="A personalized news aggregator fetching real-time top stories across various categories." />
+    
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://news-io.ai.studio/" />
+    <meta property="og:title" content="GlobalNews.site" />
+    <meta property="og:description" content="A personalized news aggregator fetching real-time top stories across various categories." />
+    <meta property="og:image" content="/logo.png" />
+
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image" />
+    <meta property="twitter:url" content="https://news-io.ai.studio/" />
+    <meta property="twitter:title" content="GlobalNews.site" />
+    <meta property="twitter:description" content="A personalized news aggregator fetching real-time top stories across various categories." />
+    <meta property="twitter:image" content="/logo.png" />
+
+    <meta name="theme-color" content="#0a0a0a" />
+    <script>
+      // Suppress unhandled WebSocket connection errors from disabled HMR in iframe/dev proxy
+      window.addEventListener('error', function(e) {
+        if (e && (e.message?.includes('WebSocket') || e.filename?.includes('vite/client'))) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+        }
+      }, true);
+      window.addEventListener('unhandledrejection', function(e) {
+        if (e && e.reason && String(e.reason).includes('WebSocket')) {
+          e.preventDefault();
+        }
+      });
+    </script>
+  </head>
+  <body class="bg-[#0a0a0a] text-white">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

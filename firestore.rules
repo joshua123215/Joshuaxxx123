@@ -1,0 +1,91 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =========================================================================
+    // HELPER FUNCTIONS (CHECK 01 & CHECK 09)
+    // =========================================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.email == "joshuaocansey731@gmail.com" ||
+        request.auth.token.email == "joshuaocansey66@gmail.com"
+      );
+    }
+
+    // =========================================================================
+    // USER PROFILES & SUBSCRIPTION DATA (CHECK 03 & CHECK 19)
+    // Client cannot self-grant 'admin' role or 'isSubscribed: true'
+    // =========================================================================
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
+
+      // Create: Owner can create initial profile, but CANNOT self-assign admin role or active subscription
+      allow create: if isOwner(userId) && (
+        isAdmin() ||
+        (
+          (!('role' in request.resource.data) || request.resource.data.role == 'user') &&
+          (!('isSubscribed' in request.resource.data) || request.resource.data.isSubscribed == false)
+        )
+      );
+
+      // Update: Owner can update profile (e.g. read count, name), but CANNOT elevate role or subscription
+      allow update: if isOwner(userId) && (
+        isAdmin() ||
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'isSubscribed', 'subscriptionExpiresAt', 'subscriptionTier'])
+      );
+
+      // Delete: Only admin can delete user records
+      allow delete: if isAdmin();
+    }
+
+    // =========================================================================
+    // MOVIES STREAMING ARCHIVE (SECURED: READ-ONLY FOR PUBLIC, WRITE FOR ADMIN)
+    // =========================================================================
+    match /movies/{movieId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // =========================================================================
+    // GHANA MOMO TRANSACTIONS (IMMUTABLE BY CLIENTS; VERIFIED BY ADMIN)
+    // =========================================================================
+    match /transactions/{transactionId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() &&
+                    request.resource.data.userId == request.auth.uid &&
+                    request.resource.data.status == 'pending';
+      allow update, delete: if isAdmin();
+    }
+
+    // =========================================================================
+    // USER BOOKMARKS & SAVED CONTENT
+    // =========================================================================
+    match /bookmarks/{bookmarkId} {
+      allow read, write: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid) && (request.resource == null || request.resource.data.userId == request.auth.uid);
+    }
+
+    // =========================================================================
+    // ADMIN SETTINGS & PLATFORM METRICS
+    // =========================================================================
+    match /admin_settings/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // =========================================================================
+    // DEFAULT DENY ALL OTHER PATHS (PILLAR 1: LEAST PRIVILEGE)
+    // =========================================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "GlobalNews.site",
+  "description": "A personalized news aggregator fetching real-time top stories across various categories.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

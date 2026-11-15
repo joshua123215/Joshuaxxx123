@@ -1,0 +1,10 @@
+{
+  "name": "Global News",
+  "short_name": "Global News",
+  "id": "https://globalnews.site/",
+  "description": "Global News — breaking news, world news, business, technology, sports and more.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FFFFFF",
+  "theme_color": "#FFFFFF"
+}

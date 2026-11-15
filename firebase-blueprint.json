@@ -1,0 +1,67 @@
+{
+  "entities": {
+    "users": {
+      "title": "User Profile & Subscription",
+      "description": "User profile, roles, and 30-day subscription pass status",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "user"] },
+        "isSubscribed": { "type": "boolean" },
+        "subscriptionTier": { "type": "string" },
+        "subscriptionExpiresAt": { "type": "number" },
+        "subscribedAt": { "type": "string" },
+        "articlesReadCount": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "lastLoginAt": { "type": "string" }
+      }
+    },
+    "movies": {
+      "title": "Movie Archive",
+      "description": "Ad-free public domain movie streams",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "poster_url": { "type": "string" },
+        "video_url": { "type": "string" },
+        "description": { "type": "string" }
+      }
+    },
+    "transactions": {
+      "title": "Ghana MoMo Transactions",
+      "description": "Ghana Mobile Money payment submissions awaiting admin verification",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "userPhone": { "type": "string" },
+        "network": { "type": "string", "enum": ["mtn", "telecel", "at"] },
+        "recipientPhone": { "type": "string" },
+        "amountGhs": { "type": "number" },
+        "reference": { "type": "string" },
+        "unlockCode": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "createdAt": { "type": "string" },
+        "approvedAt": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/users" },
+      "description": "Individual user profile with role and subscription state"
+    },
+    "/movies/{movieId}": {
+      "schema": { "$ref": "#/entities/movies" },
+      "description": "Public domain movie stream catalog"
+    },
+    "/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/transactions" },
+      "description": "Mobile Money transactions submitted by Ghana users"
+    }
+  }
+}
