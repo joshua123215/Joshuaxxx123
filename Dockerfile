@@ -9,9 +9,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install dependencies cleanly from lockfile
+# Install dependencies cleanly from lockfile (fall back to npm install if lockfile drifted)
 COPY package.json package-lock.json ./
-RUN npm ci --no-audit --no-fund
+RUN (npm ci --no-audit --no-fund || npm install --no-audit --no-fund) && npm cache clean --force
 
 # Copy application source and build frontend + backend server bundle
 COPY . .
@@ -22,6 +22,7 @@ RUN mkdir -p /app/data /app/public/generated-videos /app/public/generated-voices
 
 ENV NODE_ENV=production
 ENV PORT=10000
+ENV NODE_OPTIONS="--max-old-space-size=320"
 
 EXPOSE 10000
 
