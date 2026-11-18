@@ -26,20 +26,7 @@
     <meta property="twitter:image" content="/logo.png" />
 
     <meta name="theme-color" content="#0a0a0a" />
-    <script>
-      // Suppress unhandled WebSocket connection errors from disabled HMR in iframe/dev proxy
-      window.addEventListener('error', function(e) {
-        if (e && (e.message?.includes('WebSocket') || e.filename?.includes('vite/client'))) {
-          e.stopImmediatePropagation();
-          e.preventDefault();
-        }
-      }, true);
-      window.addEventListener('unhandledrejection', function(e) {
-        if (e && e.reason && String(e.reason).includes('WebSocket')) {
-          e.preventDefault();
-        }
-      });
-    </script>
+    <script src="/ws-guard.js"></script>
   </head>
   <body class="bg-[#0a0a0a] text-white">
     <div id="root"></div>

@@ -10,7 +10,8 @@ import {
   isValidPhone,
   isValidEmail,
   sanitizeString,
-  maskSensitive
+  maskSensitive,
+  escapeHtml
 } from "./security.js";
 
 export const PRIMARY_OWNER_EMAIL = "joshuaocansey731@gmail.com";
@@ -189,27 +190,27 @@ async function sendPaymentNotificationEmail(tx: GhanaTransaction, baseUrl: strin
               </tr>
               <tr>
                 <td style="padding: 6px 0; color: #94a3b8;">Recipient Wallet:</td>
-                <td style="padding: 6px 0; font-weight: 700; color: #ffffff; text-align: right;">${tx.recipientPhone} (${tx.recipientName})</td>
+                <td style="padding: 6px 0; font-weight: 700; color: #ffffff; text-align: right;">${escapeHtml(tx.recipientPhone)} (${escapeHtml(tx.recipientName)})</td>
               </tr>
               <tr>
                 <td style="padding: 6px 0; color: #94a3b8;">Customer Phone:</td>
-                <td style="padding: 6px 0; font-weight: 700; color: #38bdf8; font-size: 16px; text-align: right;">${tx.userPhone}</td>
+                <td style="padding: 6px 0; font-weight: 700; color: #38bdf8; font-size: 16px; text-align: right;">${escapeHtml(tx.userPhone)}</td>
               </tr>
               <tr>
                 <td style="padding: 6px 0; color: #94a3b8;">Network:</td>
-                <td style="padding: 6px 0; font-weight: 600; color: #ffffff; text-align: right;">${networkDisplay}</td>
+                <td style="padding: 6px 0; font-weight: 600; color: #ffffff; text-align: right;">${escapeHtml(networkDisplay)}</td>
               </tr>
               <tr>
                 <td style="padding: 6px 0; color: #94a3b8;">Customer Email:</td>
-                <td style="padding: 6px 0; color: #cbd5e1; text-align: right;">${tx.userEmail}</td>
+                <td style="padding: 6px 0; color: #cbd5e1; text-align: right;">${escapeHtml(tx.userEmail)}</td>
               </tr>
               <tr>
                 <td style="padding: 6px 0; color: #94a3b8;">Reference / Note:</td>
-                <td style="padding: 6px 0; font-family: monospace; color: #f8fafc; text-align: right;">${tx.reference || "None provided"}</td>
+                <td style="padding: 6px 0; font-family: monospace; color: #f8fafc; text-align: right;">${escapeHtml(tx.reference || "None provided")}</td>
               </tr>
               <tr>
                 <td style="padding: 8px 0 0; color: #94a3b8; border-top: 1px solid #1e293b;">6-Digit Manual Unlock PIN:</td>
-                <td style="padding: 8px 0 0; font-weight: 800; font-size: 22px; color: #fbbf24; text-align: right; letter-spacing: 2px; border-top: 1px solid #1e293b;">${tx.unlockCode}</td>
+                <td style="padding: 8px 0 0; font-weight: 800; font-size: 22px; color: #fbbf24; text-align: right; letter-spacing: 2px; border-top: 1px solid #1e293b;">${escapeHtml(tx.unlockCode)}</td>
               </tr>
             </table>
           </div>
@@ -302,6 +303,11 @@ async function sendPaymentNotificationEmail(tx: GhanaTransaction, baseUrl: strin
 }
 
 export const paymentRouter = Router();
+
+paymentRouter.use("/api/payment", (_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, private");
+  next();
+});
 
 // 1. INITIATE PAYMENT (Rate limited & strictly validated)
 paymentRouter.post("/api/payment/ghana-initiate", paymentLimiter, async (req: Request, res: Response) => {
@@ -489,10 +495,10 @@ paymentRouter.get("/api/payment/verify", (req: Request, res: Response) => {
             The user's app screen has been immediately unlocked with full 30-Day VIP access.
           </p>
           <div class="info">
-            <div><span class="label">Customer Phone:</span><span class="val">${tx.userPhone}</span></div>
-            <div><span class="label">Customer Email:</span><span class="val">${tx.userEmail}</span></div>
+            <div><span class="label">Customer Phone:</span><span class="val">${escapeHtml(tx.userPhone)}</span></div>
+            <div><span class="label">Customer Email:</span><span class="val">${escapeHtml(tx.userEmail)}</span></div>
             <div><span class="label">Amount Received:</span><span class="val" style="color:#22c55e;">GH₵ ${tx.amountGhs}.00</span></div>
-            <div><span class="label">Wallet:</span><span class="val">${tx.recipientPhone}</span></div>
+            <div><span class="label">Wallet:</span><span class="val">${escapeHtml(tx.recipientPhone)}</span></div>
           </div>
           <a href="/" class="btn">Return to Global News</a>
         </div>
@@ -524,7 +530,7 @@ paymentRouter.get("/api/payment/verify", (req: Request, res: Response) => {
         <div class="card">
           <div class="icon">✕</div>
           <h2>Payment Marked as Declined</h2>
-          <p>The transaction from <strong>${tx.userPhone}</strong> has been declined because the money was not received on 0507553110.</p>
+          <p>The transaction from <strong>${escapeHtml(tx.userPhone)}</strong> has been declined because the money was not received on 0507553110.</p>
           <a href="/" class="btn">Return to App</a>
         </div>
       </body>

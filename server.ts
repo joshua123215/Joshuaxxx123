@@ -21,27 +21,84 @@ import {
 } from "./src/server/security.js";
 
 const app = express();
+const isProd = process.env.NODE_ENV === "production";
 app.set("trust proxy", 1);
 app.disable("x-powered-by");
 
-// Check 14: Security Headers
+// Check 14: Security Headers (CSP, X-Frame-Options, Permissions-Policy, HSTS)
 app.use(
   helmet({
-    contentSecurityPolicy: false, // Vite SPA and external embeds compatibility
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        baseUri: ["'self'"],
+        objectSrc: ["'none'"],
+        formAction: ["'self'"],
+        scriptSrc: isProd
+          ? [
+              "'self'",
+              "https://apis.google.com",
+              "https://www.gstatic.com",
+              "https://accounts.google.com",
+              "https://www.youtube.com",
+              "https://s.ytimg.com",
+            ]
+          : [
+              "'self'",
+              "'unsafe-inline'",
+              "'unsafe-eval'",
+              "https://apis.google.com",
+              "https://www.gstatic.com",
+              "https://accounts.google.com",
+              "https://www.youtube.com",
+              "https://s.ytimg.com",
+            ],
+        scriptSrcAttr: ["'none'"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        fontSrc: ["'self'", "data:", "https://fonts.gstatic.com"],
+        imgSrc: ["'self'", "data:", "blob:", "https:", "http:"],
+        mediaSrc: ["'self'", "blob:", "data:", "https:", "http:"],
+        connectSrc: ["'self'", "https:", "wss:"],
+        frameSrc: ["'self'", "https:"],
+        workerSrc: ["'self'", "blob:"],
+        frameAncestors: isProd
+          ? ["'self'"]
+          : [
+              "'self'",
+              "https://aistudio.google.com",
+              "https://*.google.com",
+              "https://*.googleusercontent.com",
+            ],
+        upgradeInsecureRequests: isProd ? [] : null,
+      },
+    },
     crossOriginEmbedderPolicy: false,
     crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" }, // Allow Google Auth popups
     crossOriginResourcePolicy: { policy: "cross-origin" },
-    frameguard: false, // Set on /api routes explicitly below so app embeds cleanly in preview iframes
+    frameguard: isProd ? { action: "sameorigin" } : false,
+    referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+    hsts: {
+      maxAge: 31536000,
+      includeSubDomains: true,
+    },
   })
 );
 
 app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
-  if (req.path.startsWith("/api")) {
+  if (isProd || req.path.startsWith("/api")) {
     res.setHeader("X-Frame-Options", "SAMEORIGIN");
   }
-  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-  res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  res.setHeader(
+    "Permissions-Policy",
+    "geolocation=(), microphone=(), camera=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()"
+  );
+  if (
+    req.path.startsWith("/api/drive") ||
+    req.path.startsWith("/api/automation/admin")
+  ) {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, private");
+  }
   next();
 });
 
@@ -212,16 +269,12 @@ app.get("/api/proxy-image", async (req, res) => {
       return res.status(400).send("Prohibited or invalid target URL.");
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-
-    const response = await fetch(imageUrl, {
-      signal: controller.signal,
+    const response = await safeFetchPublicUrl(imageUrl, {
+      timeoutMs: 8000,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
       }
     });
-    clearTimeout(timeout);
 
     if (!response.ok) {
       return res.status(response.status).send("Failed to fetch image");
@@ -425,6 +478,45 @@ async function resolveSafeRedirectUrl(rawUrl: string): Promise<{ ok: boolean; fi
     }
   }
   return { ok: true, finalUrl: currentUrl };
+}
+
+async function safeFetchPublicUrl(
+  rawUrl: string,
+  options: { timeoutMs?: number; headers?: Record<string, string> } = {}
+): Promise<globalThis.Response> {
+  let currentUrl = rawUrl;
+  const timeoutMs = options.timeoutMs ?? 8000;
+
+  for (let hop = 0; hop < 5; hop++) {
+    const safety = isSafePublicUrl(currentUrl);
+    if (!safety.safe) {
+      throw new Error(safety.reason || "Unsafe target URL");
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(currentUrl, {
+        signal: controller.signal,
+        redirect: "manual",
+        headers: options.headers,
+      });
+      clearTimeout(timer);
+
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get("location");
+        if (!location) return response;
+        currentUrl = new URL(location, currentUrl).toString();
+        continue;
+      }
+
+      return response;
+    } catch (err) {
+      clearTimeout(timer);
+      throw err;
+    }
+  }
+  throw new Error("Too many redirects");
 }
 
 async function transcodeToTempFile(
@@ -1531,20 +1623,20 @@ app.get("/api/download-file", async (req, res) => {
       return;
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-
-    const response = await fetch(fileUrl, {
-      signal: controller.signal,
+    const response = await safeFetchPublicUrl(fileUrl, {
+      timeoutMs: 10000,
       headers: {
         'User-Agent': BROWSER_USER_AGENT
       }
     });
-    clearTimeout(timeout);
 
     if (!response.ok) {
-      // If server-side fetch is blocked by upstream bot protection, redirect client directly
-      return res.redirect(302, fileUrl);
+      // If server-side fetch is blocked by upstream bot protection, redirect client only if URL resolves safely
+      const safeRedirect = await resolveSafeRedirectUrl(fileUrl);
+      if (!safeRedirect.ok || !safeRedirect.finalUrl) {
+        return res.status(400).send("Prohibited or invalid target URL.");
+      }
+      return res.redirect(302, safeRedirect.finalUrl);
     }
 
     const contentType = response.headers.get('content-type') || (isTorrent ? 'application/x-bittorrent' : 'video/mp4');
@@ -1644,11 +1736,11 @@ app.get("/api/proxy-apibay", async (req, res) => {
 
 app.get("/api/proxy-yts", async (req, res) => {
   try {
-    const imdbId = req.query.imdb_id;
-    if (!imdbId) {
-      return res.status(400).send("imdb_id is required");
+    const imdbId = String(req.query.imdb_id || "").trim();
+    if (!imdbId || !/^[a-zA-Z0-9_-]{2,24}$/.test(imdbId)) {
+      return res.status(400).send("Valid imdb_id is required");
     }
-    const response = await fetch(`https://movies-api.accel.li/api/v2/movie_details.json?imdb_id=${imdbId}`);
+    const response = await fetch(`https://movies-api.accel.li/api/v2/movie_details.json?imdb_id=${encodeURIComponent(imdbId)}`);
     const data = await response.json();
     res.json(data);
   } catch (error) {
@@ -1867,14 +1959,10 @@ app.get('/api/og-image', async (req, res) => {
       return res.status(400).send("Prohibited or invalid target URL.");
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6000);
-    
-    const response = await fetch(targetUrl, {
-       signal: controller.signal,
+    const response = await safeFetchPublicUrl(targetUrl, {
+       timeoutMs: 6000,
        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' }
     });
-    clearTimeout(timeout);
     const html = await response.text();
     
     let ogMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
@@ -1889,10 +1977,10 @@ app.get('/api/og-image', async (req, res) => {
     }
     
     if (ogMatch && ogMatch[1]) {
-       let imgUrl = ogMatch[1];
-       if (imgUrl.startsWith('/')) {
-         const urlObj = new URL(targetUrl);
-         imgUrl = urlObj.origin + imgUrl;
+       const imgUrl = new URL(ogMatch[1], targetUrl).toString();
+       const imgSafety = isSafePublicUrl(imgUrl);
+       if (!imgSafety.safe) {
+         return res.status(400).send("Prohibited image URL");
        }
        return res.redirect(imgUrl);
     }
@@ -1980,7 +2068,6 @@ app.get("/api/news", async (req, res) => {
   }
 });
 
-const isProd = process.env.NODE_ENV === "production";
 let viteServerPromise: Promise<any> | null = null;
 
 if (!isProd) {

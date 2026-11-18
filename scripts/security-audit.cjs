@@ -57,6 +57,19 @@ async function runAudit() {
     assert(health.headers['x-content-type-options'] === 'nosniff', "Check 14: X-Content-Type-Options is nosniff");
     assert(health.headers['x-frame-options'] === 'SAMEORIGIN', "Check 14: X-Frame-Options is SAMEORIGIN");
     assert(Boolean(health.headers['strict-transport-security']), "Check 14: Strict-Transport-Security (HSTS) is present");
+    assert(Boolean(health.headers['content-security-policy']), "Check 14: Content-Security-Policy (CSP) is present");
+    assert(Boolean(health.headers['permissions-policy']), "Check 14: Permissions-Policy is present");
+    assert(health.headers['referrer-policy'] === 'strict-origin-when-cross-origin', "Check 14: Referrer-Policy is set");
+
+    const home = await makeRequest({
+      hostname: 'localhost',
+      port: 3000,
+      path: '/',
+      method: 'GET'
+    });
+    assert(home.statusCode === 200, "Root HTML responds 200");
+    assert(Boolean(home.headers['content-security-policy']), "Check 14: Root HTML includes Content-Security-Policy");
+    assert(Boolean(home.headers['permissions-policy']), "Check 14: Root HTML includes Permissions-Policy");
 
     // 2. Check 23: Sensitive File Access blocked
     const dotEnv = await makeRequest({
@@ -143,6 +156,14 @@ async function runAudit() {
       method: 'GET'
     });
     assert(ssrfPrivateIp.statusCode === 400, "Bonus B2: SSRF probe to RFC1918 private IP is blocked (400)");
+
+    const ssrfIpv6Bracket = await makeRequest({
+      hostname: 'localhost',
+      port: 3000,
+      path: '/api/proxy-image?url=http://[::1]:3000/api/health',
+      method: 'GET'
+    });
+    assert(ssrfIpv6Bracket.statusCode === 400, "Bonus B2: SSRF probe to IPv6 [::1] is blocked (400)");
 
     // 5. Check 06: Form Input Validation
     const invalidPhonePayment = await makeRequest({

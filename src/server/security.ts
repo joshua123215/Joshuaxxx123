@@ -77,6 +77,7 @@ export function logSecurityEvent(
 // ============================================================================
 const BLOCKED_HOST_PATTERNS = [
   /^localhost$/i,
+  /\.localhost$/i,
   /^127\./,
   /^0\./,
   /^10\./,
@@ -87,8 +88,13 @@ const BLOCKED_HOST_PATTERNS = [
   /\.internal$/i,
   /\.local$/i,
   /^::1$/,
-  /^fc00:/,
-  /^fe80:/,
+  /^::$/,
+  /^::ffff:/i,
+  /^fc[0-9a-f]{2}:/i,
+  /^fd[0-9a-f]{2}:/i,
+  /^fe80:/i,
+  /^\d+$/, // Decimal integer IP obfuscation (e.g., 2130706433)
+  /^0x[0-9a-f]+$/i, // Hex IP obfuscation
 ];
 
 export function isSafePublicUrl(rawUrl: string): { safe: boolean; reason?: string; parsedUrl?: URL } {
@@ -101,10 +107,11 @@ export function isSafePublicUrl(rawUrl: string): { safe: boolean; reason?: strin
     }
 
     const hostname = parsed.hostname.toLowerCase().trim();
+    const cleanHost = hostname.replace(/^\[|\]$/g, "");
 
-    // Check against blocked IP / local host patterns
+    // Check against blocked IP / local host patterns (including bracketed IPv6 like [::1])
     for (const pattern of BLOCKED_HOST_PATTERNS) {
-      if (pattern.test(hostname)) {
+      if (pattern.test(hostname) || pattern.test(cleanHost)) {
         return { safe: false, reason: `Prohibited internal/private target host: ${hostname}` };
       }
     }
@@ -321,10 +328,21 @@ export function sanitizeString(input: unknown, maxLength = 255): string {
   return input.trim().slice(0, maxLength);
 }
 
+export function escapeHtml(input: unknown): string {
+  return String(input ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export function isValidEmail(email: unknown): boolean {
   if (typeof email !== "string") return false;
-  const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return re.test(email.trim());
+  const trimmed = email.trim();
+  if (trimmed.length > 254) return false;
+  const re = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+$/;
+  return re.test(trimmed);
 }
 
 export function isValidPhone(phone: unknown): boolean {
