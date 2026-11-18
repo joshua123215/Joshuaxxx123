@@ -21,6 +21,7 @@ import {
 } from "./src/server/security.js";
 
 const app = express();
+app.set("trust proxy", 1);
 app.disable("x-powered-by");
 
 // Check 14: Security Headers
@@ -67,13 +68,14 @@ if (process.env.GEMINI_API_KEY) {
 
 app.post("/api/recommend-movies", async (req, res) => {
   try {
-    const { query } = req.body;
+    const { query, language } = req.body;
+    const preferredLang = typeof language === "string" && language.trim() ? language.trim().slice(0, 40) : "English";
     if (!ai) {
       return res.status(500).json({ error: "Gemini API key not configured." });
     }
     const response = await ai.models.generateContent({
       model: "gemini-3.8-flash",
-      contents: `You are a movie recommendation engine. The user searched for: "${query}". Provide a JSON list of 10 movie titles that exactly match this theme, genre, or keyword. Output ONLY a valid JSON array of strings, e.g. ["Movie 1", "Movie 2"]. Do not include any markdown formatting.`,
+      contents: `You are a movie recommendation engine. The user searched for: "${query}". Provide a JSON list of 10 movie titles that exactly match this theme, genre, or keyword. Prioritize movies whose spoken language is ${preferredLang} (or widely available in ${preferredLang} audio). Output ONLY a valid JSON array of strings, e.g. ["Movie 1", "Movie 2"]. Do not include any markdown formatting.`,
       config: {
         responseMimeType: "application/json"
       }
@@ -262,6 +264,97 @@ function resolveFfmpegPath(): string {
   return "ffmpeg";
 }
 
+function resolveFfprobePath(): string {
+  for (const sysPath of ["/usr/bin/ffprobe", "/usr/local/bin/ffprobe", "/bin/ffprobe"]) {
+    if (fs.existsSync(sysPath)) {
+      return sysPath;
+    }
+  }
+  return "ffprobe";
+}
+
+async function detectEnglishAudioMapArgs(inputSource: string): Promise<string[]> {
+  return new Promise((resolve) => {
+    const ffprobeBin = resolveFfprobePath();
+    const isHttp = /^https?:\/\//i.test(inputSource);
+    const args = [
+      "-v", "quiet",
+      "-print_format", "json",
+      "-show_streams",
+      ...(isHttp ? ["-user_agent", BROWSER_USER_AGENT] : []),
+      inputSource,
+    ];
+
+    let stdout = "";
+    let settled = false;
+    let proc: ReturnType<typeof spawn> | null = null;
+    try {
+      proc = spawn(ffprobeBin, args, { stdio: ["ignore", "pipe", "ignore"] });
+    } catch {
+      return resolve([]);
+    }
+
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        try {
+          proc?.kill("SIGKILL");
+        } catch {
+          // ignore
+        }
+        resolve([]);
+      }
+    }, 4500);
+
+    proc.stdout?.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+
+    proc.on("error", () => {
+      clearTimeout(timer);
+      if (!settled) {
+        settled = true;
+        resolve([]);
+      }
+    });
+
+    proc.on("close", () => {
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      try {
+        const parsed = JSON.parse(stdout);
+        const streams: any[] = Array.isArray(parsed?.streams) ? parsed.streams : [];
+        const audioStreams = streams.filter((s) => s?.codec_type === "audio");
+        if (audioStreams.length <= 1) {
+          return resolve([]);
+        }
+        const engStream = audioStreams.find((s) => {
+          const lang = String(s?.tags?.language || "").toLowerCase().trim();
+          const title = String(s?.tags?.title || "").toLowerCase();
+          return (
+            lang === "en" ||
+            lang === "eng" ||
+            lang === "english" ||
+            /\benglish\b/.test(title)
+          );
+        });
+        const hasVideo = streams.some((s) => s?.codec_type === "video");
+        if (engStream && typeof engStream.index === "number") {
+          return resolve(
+            hasVideo
+              ? ["-map", "0:v:0", "-map", `0:${engStream.index}`]
+              : ["-map", `0:${engStream.index}`]
+          );
+        }
+      } catch {
+        // ignore probe parse failure
+      }
+      resolve([]);
+    });
+  });
+}
+
 function getFfmpegQualityArgs(quality: "420p" | "1080p"): string[] {
   if (quality === "420p") {
     // Blurry / Data-Saver 420p (~400 MB for a standard 90-100m film)
@@ -334,7 +427,7 @@ async function resolveSafeRedirectUrl(rawUrl: string): Promise<{ ok: boolean; fi
   return { ok: true, finalUrl: currentUrl };
 }
 
-function transcodeToTempFile(
+async function transcodeToTempFile(
   inputUrl: string,
   quality: "420p" | "1080p",
   outFilePath: string,
@@ -344,6 +437,14 @@ function transcodeToTempFile(
     onProgress?: (timeLabel: string, encodedMb: number) => void;
   }
 ): Promise<void> {
+  if (options?.isCancelled?.()) {
+    throw new Error("JOB_CANCELLED");
+  }
+  const englishMapArgs = await detectEnglishAudioMapArgs(inputUrl);
+  if (options?.isCancelled?.()) {
+    throw new Error("JOB_CANCELLED");
+  }
+
   return new Promise((resolve, reject) => {
     if (options?.isCancelled?.()) {
       return reject(new Error("JOB_CANCELLED"));
@@ -363,6 +464,7 @@ function transcodeToTempFile(
       "-y",
       ...httpFlags,
       "-i", inputUrl,
+      ...englishMapArgs,
       ...getFfmpegQualityArgs(quality),
       "-movflags", "+faststart",
       "-f", "mp4",
@@ -1394,12 +1496,14 @@ app.get("/api/download-file", async (req, res) => {
       res.setHeader("Content-Type", "video/mp4");
 
       const ffmpegBin = resolveFfmpegPath();
+      const englishMapArgs = await detectEnglishAudioMapArgs(urlCheck.finalUrl);
       const args = [
         "-user_agent", BROWSER_USER_AGENT,
         "-reconnect", "1",
         "-reconnect_streamed", "1",
         "-reconnect_delay_max", "5",
         "-i", urlCheck.finalUrl,
+        ...englishMapArgs,
         ...getFfmpegQualityArgs(quality),
         "-movflags", "frag_keyframe+empty_moov+default_base_moof",
         "-f", "mp4",
@@ -1556,10 +1660,19 @@ app.get("/api/proxy-yts", async (req, res) => {
 app.get("/api/movies/recent", async (req, res) => {
   try {
     const sortBy = req.query.sort === "latest" ? "date_added" : "download_count";
+    const langParam = typeof req.query.lang === "string" ? req.query.lang.trim().toLowerCase() : "en";
+    const englishOnly = langParam !== "all";
+    const fetchLimit = englishOnly ? 50 : 24;
     const response = await fetch(
-      `https://movies-api.accel.li/api/v2/list_movies.json?limit=24&sort_by=${sortBy}&order_by=desc&minimum_rating=5`
+      `https://movies-api.accel.li/api/v2/list_movies.json?limit=${fetchLimit}&sort_by=${sortBy}&order_by=desc&minimum_rating=5${englishOnly ? "&language=en" : ""}`
     );
-    const data = await response.json();
+    const data: any = await response.json();
+    if (englishOnly && Array.isArray(data?.data?.movies)) {
+      const englishMovies = data.data.movies.filter(
+        (m: any) => String(m?.language || "").toLowerCase() === "en"
+      );
+      data.data.movies = (englishMovies.length > 0 ? englishMovies : data.data.movies).slice(0, 24);
+    }
     res.json(data);
   } catch (error) {
     console.error("Error proxying movies api:", error);
@@ -1591,8 +1704,8 @@ app.get("/api/movies/trailer", async (req, res) => {
     const type = req.query.type === "series" ? "shows" : "movies";
     const ytCode = typeof req.query.ytCode === "string" ? req.query.ytCode.trim() : "";
 
-    const searchQueryText = `${title} ${year && year !== "N/A" ? year : ""} official movie trailer`.trim();
-    const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(searchQueryText || "official movie trailer")}`;
+    const searchQueryText = `${title} ${year && year !== "N/A" ? year : ""} official movie trailer English`.trim();
+    const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(searchQueryText || "official movie trailer English")}`;
 
     const tryVideoId = async (candidate?: string | null) => {
       if (!candidate || !/^[a-zA-Z0-9_-]{11}$/.test(candidate)) return null;
@@ -1660,7 +1773,7 @@ app.get("/api/movies/trailer", async (req, res) => {
     if (resolvedId) {
       return res.json({
         videoId: resolvedId,
-        embedUrl: `https://www.youtube.com/embed/${resolvedId}?autoplay=1&rel=0&modestbranding=1`,
+        embedUrl: `https://www.youtube.com/embed/${resolvedId}?autoplay=1&rel=0&modestbranding=1&hl=en&cc_lang_pref=en`,
         watchUrl: `https://www.youtube.com/watch?v=${resolvedId}`,
         searchUrl
       });

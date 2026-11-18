@@ -280,6 +280,8 @@ export function blockSensitiveFileRequests(req: Request, res: Response, next: Ne
     urlPath === "/package.json" ||
     urlPath === "/package-lock.json" ||
     urlPath === "/tsconfig.json" ||
+    urlPath === "/dockerfile" ||
+    urlPath === "/render.yaml" ||
     urlPath === "/firestore.rules" ||
     urlPath === "/security_map.md" ||
     urlPath === "/security_report.md" ||

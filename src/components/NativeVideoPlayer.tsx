@@ -28,7 +28,43 @@ export default function NativeVideoPlayer({ src, poster, autoPlay = true }: Nati
           'fullscreen'
         ],
         autoplay: autoPlay,
+        captions: { active: false, language: 'en' },
       });
+
+      const videoEl = videoRef.current as HTMLVideoElement & {
+        audioTracks?: {
+          length: number;
+          [index: number]: { enabled: boolean; language?: string; label?: string };
+        };
+      };
+
+      const selectEnglishAudioTrack = () => {
+        const tracks = videoEl.audioTracks;
+        if (!tracks || tracks.length <= 1) return;
+        let englishIdx = -1;
+        for (let i = 0; i < tracks.length; i++) {
+          const lang = String(tracks[i].language || '').toLowerCase();
+          const label = String(tracks[i].label || '').toLowerCase();
+          if (lang.startsWith('en') || label.includes('english')) {
+            englishIdx = i;
+            break;
+          }
+        }
+        if (englishIdx !== -1) {
+          for (let i = 0; i < tracks.length; i++) {
+            tracks[i].enabled = i === englishIdx;
+          }
+        }
+      };
+
+      videoEl.addEventListener('loadedmetadata', selectEnglishAudioTrack);
+
+      return () => {
+        videoEl.removeEventListener('loadedmetadata', selectEnglishAudioTrack);
+        if (playerRef.current) {
+          playerRef.current.destroy();
+        }
+      };
     }
 
     return () => {

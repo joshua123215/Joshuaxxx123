@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: global-news
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ADMIN_API_SECRET
+        generateValue: true
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: GMAIL_USER
+        value: joshuaocansey731@gmail.com
+      - key: GMAIL_APP_PASSWORD
+        sync: false
+      - key: PAYSTACK_SECRET_KEY
+        sync: false

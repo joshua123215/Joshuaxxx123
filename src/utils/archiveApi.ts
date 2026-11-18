@@ -6,29 +6,39 @@ export async function getArchiveMp4(movieTitle: string): Promise<string | null> 
     const cleanTitle = movieTitle.replace(/[^a-zA-Z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
     if (!cleanTitle) return null;
 
-    // Use a 5-second AbortController so slow archive queries do not freeze playback
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    // Prefer English-language Internet Archive entries first, falling back to any matching title
+    const fetchArchiveDocs = async (englishFiltered: boolean) => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      try {
+        const langFilter = englishFiltered ? ' AND language:(eng OR English OR en)' : '';
+        const searchUrl = `https://archive.org/advancedsearch.php?q=title:("${encodeURIComponent(cleanTitle)}") AND mediatype:(movies)${langFilter}&fl[]=identifier,title,language,downloads&sort[]=downloads+desc&output=json`;
+        const searchResponse = await fetch(searchUrl, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (!searchResponse.ok) return [];
+        const data = await searchResponse.json();
+        return Array.isArray(data?.response?.docs) ? data.response.docs : [];
+      } catch {
+        clearTimeout(timeoutId);
+        return [];
+      }
+    };
 
-    const searchUrl = `https://archive.org/advancedsearch.php?q=title:("${encodeURIComponent(cleanTitle)}") AND mediatype:(movies)&fl[]=identifier,title,downloads&sort[]=downloads+desc&output=json`;
-    const searchResponse = await fetch(searchUrl, { signal: controller.signal });
-    clearTimeout(timeoutId);
-
-    if (!searchResponse.ok) {
-      console.info(`[Archive] Archive.org search returned HTTP ${searchResponse.status}`);
-      return null;
+    let docs = await fetchArchiveDocs(true);
+    if (!docs.length) {
+      docs = await fetchArchiveDocs(false);
     }
 
-    const searchData = await searchResponse.json();
-
-    if (!searchData.response?.docs?.length) {
+    if (!docs.length) {
       // Expected for commercial or non-public-domain movies - not an error
       console.info(`[Archive] No public-domain video cataloged on Internet Archive for "${movieTitle}"`);
       return null;
     }
 
-    // Inspect top 3 matching documents to find a valid MP4
-    const candidateDocs = searchData.response.docs.slice(0, 3);
+    const nonEnglishPattern = /\b(french|francais|spanish|espanol|hindi|german|deutsch|italian|italiano|russian|arabic|turkish|portuguese|vf|vostfr|latino|castellano)\b/i;
+
+    // Inspect top 4 matching documents to find a valid English MP4
+    const candidateDocs = docs.slice(0, 4);
     for (const doc of candidateDocs) {
       const identifier = doc.identifier;
       if (!identifier) continue;
@@ -58,8 +68,11 @@ export async function getArchiveMp4(movieTitle: string): Promise<string | null> 
         });
 
         if (mp4Files.length > 0) {
-          // Sort descending by size to get the highest quality complete movie file
+          // Prefer non-foreign-tagged MP4 files first, then largest size
           mp4Files.sort((a: any, b: any) => {
+            const aForeign = nonEnglishPattern.test(a.name) ? 1 : 0;
+            const bForeign = nonEnglishPattern.test(b.name) ? 1 : 0;
+            if (aForeign !== bForeign) return aForeign - bForeign;
             const sizeA = parseInt(a.size || '0', 10);
             const sizeB = parseInt(b.size || '0', 10);
             return sizeB - sizeA;

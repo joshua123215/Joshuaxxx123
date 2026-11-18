@@ -32,6 +32,7 @@ interface Movie {
   Poster: string;
   Type: string;
   ytTrailerCode?: string;
+  Language?: string;
 }
 
 interface TrailerInfo {
@@ -41,17 +42,18 @@ interface TrailerInfo {
 }
 
 const SERVERS = [
-  { id: "vidlink", name: "Movie Box (HD)", url: (type: string, id: string) => `https://vidlink.pro/${type === 'series' ? 'tv' : 'movie'}/${id}?primaryColor=3B82F6&autoplay=true` },
-  { id: "2embed", name: "2Embed (Fast)", url: (type: string, id: string) => type === 'series' ? `https://www.2embed.cc/embedtv/${id}&s=1&e=1` : `https://www.2embed.cc/embed/${id}` },
-  { id: "vidsrcto", name: "VidSrc To", url: (type: string, id: string) => `https://vidsrc.to/embed/${type === 'series' ? 'tv' : 'movie'}/${id}` },
-  { id: "autoembed", name: "AutoEmbed", url: (type: string, id: string) => type === 'series' ? `https://autoembed.co/tv/imdb/${id}/1/1` : `https://autoembed.co/movie/imdb/${id}` },
-  { id: "vidspark", name: "VidSpark", url: (type: string, id: string) => type === 'series' ? `https://moviesapi.to/tv/${id}-1-1` : `https://moviesapi.to/movie/${id}` },
+  { id: "vidlink", name: "Movie Box (HD)", url: (type: string, id: string) => `https://vidlink.pro/${type === 'series' ? 'tv' : 'movie'}/${id}?primaryColor=3B82F6&autoplay=true&lang=en&ds_lang=en&sub_lang=en` },
+  { id: "2embed", name: "2Embed (Fast)", url: (type: string, id: string) => type === 'series' ? `https://www.2embed.cc/embedtv/${id}&s=1&e=1&lang=en` : `https://www.2embed.cc/embed/${id}?lang=en` },
+  { id: "vidsrcto", name: "VidSrc To", url: (type: string, id: string) => `https://vidsrc.to/embed/${type === 'series' ? 'tv' : 'movie'}/${id}?ds_lang=en&lang=en` },
+  { id: "autoembed", name: "AutoEmbed", url: (type: string, id: string) => type === 'series' ? `https://autoembed.co/tv/imdb/${id}/1/1?lang=en` : `https://autoembed.co/movie/imdb/${id}?lang=en` },
+  { id: "vidspark", name: "VidSpark", url: (type: string, id: string) => type === 'series' ? `https://moviesapi.to/tv/${id}-1-1?lang=en` : `https://moviesapi.to/movie/${id}?lang=en` },
 ];
 
 export default function MovieSearch() {
   const [searchQuery, setSearchQuery] = useState("");
   const [movies, setMovies] = useState<Movie[]>([]);
   const [sortMode, setSortMode] = useState<"popular" | "latest">("popular");
+  const [englishOnly, setEnglishOnly] = useState<boolean>(true);
   const [isLoading, setIsLoading] = useState(false);
   const [playingMovieId, setPlayingMovieId] = useState<string | null>(null);
   const [playerServerId, setPlayerServerId] = useState<string>("vidlink");
@@ -115,7 +117,10 @@ export default function MovieSearch() {
   const getRecommendedTorrent = (torrents: any[], quality: MovieQualityTier) => {
     if (!torrents || torrents.length === 0) return null;
     const non4k = torrents.filter((t) => String(t.quality || "").toLowerCase() !== "2160p");
-    const pool = non4k.length > 0 ? non4k : torrents;
+    const basePool = non4k.length > 0 ? non4k : torrents;
+    const foreignTag = /\b(french|francais|spanish|espanol|hindi|italian|german|russian|korean|turkish|arabic|portuguese|vostfr|vf)\b/i;
+    const nonForeignPool = basePool.filter((t) => !foreignTag.test(`${t.url || ""} ${t.type || ""}`));
+    const pool = nonForeignPool.length > 0 ? nonForeignPool : basePool;
 
     if (quality === "420p") {
       // Data-Saver Blurry 420p (~400 MB): pick smallest available rip (prefer <= 1000 MB)
@@ -478,11 +483,14 @@ export default function MovieSearch() {
 
   const [searchError, setSearchError] = useState<string | null>(null);
 
-  const fetchRecentMovies = async (mode: "popular" | "latest" = sortMode) => {
+  const fetchRecentMovies = async (
+    mode: "popular" | "latest" = sortMode,
+    englishMode: boolean = englishOnly
+  ) => {
     setIsLoading(true);
     setSearchError(null);
     try {
-      const res = await axios.get(`/api/movies/recent?sort=${mode}`);
+      const res = await axios.get(`/api/movies/recent?sort=${mode}&lang=${englishMode ? "en" : "all"}`);
       if (res.data?.data?.movies && res.data.data.movies.length > 0) {
         const recentMovies: Movie[] = res.data.data.movies.map((m: any) => ({
           imdbID: m.imdb_code || Math.random().toString(),
@@ -490,7 +498,8 @@ export default function MovieSearch() {
           Year: m.year ? m.year.toString() : 'N/A',
           Poster: m.medium_cover_image || 'N/A',
           Type: 'movie',
-          ytTrailerCode: m.yt_trailer_code || undefined
+          ytTrailerCode: m.yt_trailer_code || undefined,
+          Language: m.language === 'en' ? 'English' : m.language ? String(m.language).toUpperCase() : 'English',
         }));
         setMovies(recentMovies);
       } else {
@@ -513,10 +522,35 @@ export default function MovieSearch() {
     }
   };
 
-  const searchMovies = async (e?: React.FormEvent) => {
+  const prioritizeEnglishMovies = async (candidates: Movie[], englishMode: boolean): Promise<Movie[]> => {
+    if (!englishMode || candidates.length === 0) return candidates;
+    const head = candidates.slice(0, 8);
+    const enrichedHead = await Promise.all(
+      head.map(async (m) => {
+        if (m.Language) return m;
+        try {
+          const detail = await axios.get(`https://www.omdbapi.com/?i=${encodeURIComponent(m.imdbID)}&apikey=thewdb`, {
+            timeout: 3500,
+          });
+          if (detail.data?.Response === "True" && detail.data?.Language) {
+            return { ...m, Language: String(detail.data.Language) };
+          }
+        } catch {
+          // keep original if detail lookup times out
+        }
+        return m;
+      })
+    );
+    const merged = [...enrichedHead, ...candidates.slice(8)];
+    const englishMatched = merged.filter((m) => !m.Language || /\benglish\b/i.test(m.Language));
+    return englishMatched.length > 0 ? englishMatched : merged;
+  };
+
+  const searchMovies = async (e?: React.FormEvent, englishModeOverride?: boolean) => {
     if (e) e.preventDefault();
+    const useEnglish = englishModeOverride !== undefined ? englishModeOverride : englishOnly;
     if (!searchQuery.trim()) {
-      fetchRecentMovies();
+      fetchRecentMovies(sortMode, useEnglish);
       return;
     }
 
@@ -576,11 +610,15 @@ export default function MovieSearch() {
         const uniqueMovies = Array.from(
           new Map(results.map((m: Movie) => [m.imdbID, m])).values(),
         ) as Movie[];
-        setMovies(uniqueMovies);
+        const ordered = await prioritizeEnglishMovies(uniqueMovies, useEnglish);
+        setMovies(ordered);
       } else {
         // Fallback to AI thematic/genre search
         try {
-          const aiRes = await axios.post("/api/recommend-movies", { query });
+          const aiRes = await axios.post("/api/recommend-movies", {
+            query,
+            language: useEnglish ? "English" : "Any",
+          });
           if (aiRes.data?.titles && Array.isArray(aiRes.data.titles)) {
             const titles: string[] = aiRes.data.titles;
             const moviePromises = titles.map(t => axios.get(`https://www.omdbapi.com/?t=${encodeURIComponent(t)}&apikey=thewdb`));
@@ -597,7 +635,8 @@ export default function MovieSearch() {
                const uniqueMovies = Array.from(
                  new Map(aiResults.map((m: Movie) => [m.imdbID, m])).values(),
                ) as Movie[];
-               setMovies(uniqueMovies);
+               const ordered = await prioritizeEnglishMovies(uniqueMovies, useEnglish);
+               setMovies(ordered);
                setIsLoading(false);
                return; // Exit early if we found thematic movies
             }
@@ -1333,38 +1372,64 @@ export default function MovieSearch() {
         </div>
       </form>
 
-      {!searchQuery && (
-        <div className="flex items-center gap-2 mb-4">
-          <button
-            type="button"
-            onClick={() => {
-              setSortMode("popular");
-              fetchRecentMovies("popular");
-            }}
-            className={`px-4 py-1.5 rounded-full text-xs font-bold transition-colors ${
-              sortMode === "popular"
-                ? "bg-blue-600 text-white"
-                : "bg-white/5 text-gray-400 hover:text-white hover:bg-white/10"
-            }`}
-          >
-            Popular Movies
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setSortMode("latest");
-              fetchRecentMovies("latest");
-            }}
-            className={`px-4 py-1.5 rounded-full text-xs font-bold transition-colors ${
-              sortMode === "latest"
-                ? "bg-blue-600 text-white"
-                : "bg-white/5 text-gray-400 hover:text-white hover:bg-white/10"
-            }`}
-          >
-            Latest Additions
-          </button>
-        </div>
-      )}
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+        {!searchQuery ? (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setSortMode("popular");
+                fetchRecentMovies("popular", englishOnly);
+              }}
+              className={`px-4 py-1.5 rounded-full text-xs font-bold transition-colors ${
+                sortMode === "popular"
+                  ? "bg-blue-600 text-white"
+                  : "bg-white/5 text-gray-400 hover:text-white hover:bg-white/10"
+              }`}
+            >
+              Popular Movies
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSortMode("latest");
+                fetchRecentMovies("latest", englishOnly);
+              }}
+              className={`px-4 py-1.5 rounded-full text-xs font-bold transition-colors ${
+                sortMode === "latest"
+                  ? "bg-blue-600 text-white"
+                  : "bg-white/5 text-gray-400 hover:text-white hover:bg-white/10"
+              }`}
+            >
+              Latest Additions
+            </button>
+          </div>
+        ) : (
+          <div />
+        )}
+
+        <button
+          type="button"
+          onClick={() => {
+            const next = !englishOnly;
+            setEnglishOnly(next);
+            if (!searchQuery.trim()) {
+              fetchRecentMovies(sortMode, next);
+            } else {
+              searchMovies(undefined, next);
+            }
+          }}
+          className={`px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition-colors border ${
+            englishOnly
+              ? "bg-green-600/20 border-green-500/40 text-green-300"
+              : "bg-white/5 border-white/10 text-gray-400 hover:text-white hover:bg-white/10"
+          }`}
+          title="Filter movies to English spoken audio"
+        >
+          <Globe className="w-3.5 h-3.5" />
+          <span>{englishOnly ? "English Spoken: ON" : "All Languages"}</span>
+        </button>
+      </div>
 
       {/* Google Drive Cloud Integration Bar */}
       <GoogleDriveSection
@@ -1563,7 +1628,7 @@ export default function MovieSearch() {
                 )}
               </div>
               <div className="p-6">
-                <div className="flex items-center gap-3 text-xs font-medium text-gray-400 mb-3 tracking-wide">
+                <div className="flex items-center gap-3 text-xs font-medium text-gray-400 mb-3 tracking-wide flex-wrap">
                   <span className="flex items-center gap-1.5 text-blue-400 uppercase tracking-wider">
                     <Film className="w-3.5 h-3.5" />
                     {movie.Type}
@@ -1573,6 +1638,15 @@ export default function MovieSearch() {
                     <Calendar className="w-3.5 h-3.5" />
                     {movie.Year}
                   </span>
+                  {movie.Language && (
+                    <>
+                      <span>•</span>
+                      <span className="flex items-center gap-1 text-green-400 font-semibold">
+                        <Globe className="w-3 h-3" />
+                        {movie.Language.split(',')[0].trim()} Audio
+                      </span>
+                    </>
+                  )}
                 </div>
                 <div className="flex items-start justify-between gap-4">
                   <h2 className="text-2xl font-bold mb-1 leading-snug text-white">
